@@ -1,4 +1,4 @@
-"""Team JB Downloader Bot — Application Entry Point. Part 4."""
+"""Team JB Downloader Bot — Application Entry Point. Part 5."""
 
 from __future__ import annotations
 
@@ -19,9 +19,9 @@ from database import db
 from handlers import admin as admin_router
 from handlers import callbacks as callbacks_router
 from handlers import start as start_router
-from health import start_health_server
-from middlewares.auth import OwnerRejectMiddleware
+from health import start_health_serverfrom middlewares.auth import OwnerRejectMiddleware
 from middlewares.ban_check import BanCheckMiddleware
+from middlewares.force_sub import ForceSubMiddleware
 from middlewares.user_register import UserRegisterMiddleware
 
 logger = logging.getLogger(__name__)
@@ -66,7 +66,7 @@ async def run() -> None:
     configure_logging()
     settings.ensure_directories()
 
-    logger.info("Starting Team JB Downloader Bot (Part 4)")
+    logger.info("Starting Team JB Downloader Bot (Part 5)")
     logger.info("Owner ID: %d", settings.owner_id)
     logger.info("MongoDB URI: %s", settings.redacted_mongodb_uri)
     logger.info("MongoDB database: %s", settings.mongodb_database)
@@ -88,11 +88,10 @@ async def run() -> None:
     bot = build_bot()
     dp = Dispatcher(storage=fsm_storage)
 
-    # Outer middlewares run before routing; order matters:
-    # 1) register/refresh the user, 2) drop banned users.
+    # Outer middleware order: register → ban check → force-sub.
     dp.update.outer_middleware(UserRegisterMiddleware())
     dp.update.outer_middleware(BanCheckMiddleware())
-    # Regular middleware attaches is_owner to handler data.
+    dp.update.outer_middleware(ForceSubMiddleware())
     dp.update.middleware(OwnerRejectMiddleware())
 
     dp.include_router(start_router.router)
