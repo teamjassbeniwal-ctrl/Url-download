@@ -371,3 +371,41 @@ async def cmd_expirenow(message: Message) -> None:
 @router.message(Command("expirenow"))
 async def cmd_expirenow_reject(message: Message) -> None:
     await reject_not_owner(message)
+
+# ── /grantrefer (owner) ──────────────────────────────────────────────────
+
+@router.message(Command("grantrefer"), OwnerOnly())
+async def cmd_grantrefer(message: Message, command: CommandObject) -> None:
+    """
+    Manually trigger referral reward evaluation for a referred user.
+
+    Useful before the download pipeline is complete (Part 9 will call this
+    automatically). Usage: /grantrefer <referred_user_id>
+    """
+    from services.referral import maybe_grant_referral_reward
+
+    if not command.args:
+        await message.answer("Usage: /grantrefer <referred_user_id>")
+        return
+    try:
+        referred_id = int(command.args.split()[0])
+    except ValueError:
+        await message.answer("❌ Invalid user ID.")
+        return
+
+    referrer_id = await maybe_grant_referral_reward(referred_id)
+    if referrer_id is None:
+        await message.answer(
+            "No reward granted. The user either was not referred, "
+            "already had their reward granted, or has not met the "
+            "qualification threshold."
+        )
+        return
+    await message.answer(
+        f"✅ Referral reward granted to <code>{referrer_id}</code>."
+    )
+
+
+@router.message(Command("grantrefer"))
+async def cmd_grantrefer_reject(message: Message) -> None:
+    await reject_not_owner(message)
