@@ -1,6 +1,4 @@
-"""
-Team JB Downloader Bot — Force-subscribe middleware. aiogram 3.x correct version.
-"""
+"""Team JB Downloader Bot — Force-subscribe middleware. aiogram 3.x correct version."""
 
 from __future__ import annotations
 
@@ -30,12 +28,10 @@ logger = logging.getLogger(__name__)
 
 
 def _is_joined(member) -> bool:
-    """Return True only for statuses that mean 'currently in the channel'."""
     if isinstance(member, (ChatMemberCreator, ChatMemberAdministrator, ChatMemberMember)):
         return True
     if isinstance(member, ChatMemberRestricted):
-        return member.is_member  # Restricted users can still be members
-    # ChatMemberLeft and ChatMemberBanned are not joined
+        return member.is_member
     return False
 
 
@@ -79,8 +75,6 @@ class ForceSubMiddleware(BaseMiddleware):
                     "Force-sub CHECK FAILED for user %d in channel %s: %s: %s",
                     user.id, channel_id, type(exc).__name__, exc,
                 )
-                # Do NOT fail open. If the check fails, treat as not joined so
-                # the user sees the prompt and the owner can see the error in logs.
                 missing.append(ch)
 
         if not missing:
