@@ -227,18 +227,11 @@ async def cmd_restart(message: Message) -> None:
 
 @router.message(Command("addchannel"), OwnerOnly())
 async def cmd_addchannel(message: Message, command: CommandObject) -> None:
-    """
-    Add a force-subscribe channel.
-
-    Usage:
-    • /addchannel @username        — public channel
-    • /addchannel -1001234567890   — private channel (bot must be admin)
-    """
     if not command.args:
         await message.answer(
             "Usage:\n"
             "• /addchannel @username\n"
-            "• /addchannel -1001234567890   (bot must be admin in private channel)"
+            "• /addchannel -1001234567890   (bot must be admin)"
         )
         return
 
@@ -246,16 +239,15 @@ async def cmd_addchannel(message: Message, command: CommandObject) -> None:
 
     channel_id: int | None = None
     channel_username: str | None = None
+    chat = None
 
     try:
         if raw.startswith("@"):
             chat = await message.bot.get_chat(raw)
-            channel_id = chat.id
-            channel_username = chat.username
         else:
-            channel_id = int(raw)
-            chat = await message.bot.get_chat(channel_id)
-            channel_username = chat.username
+            chat = await message.bot.get_chat(int(raw))
+        channel_id = chat.id
+        channel_username = chat.username
     except Exception as exc:
         await message.answer(
             f"❌ Could not resolve channel <code>{raw}</code>.\n"
@@ -263,16 +255,34 @@ async def cmd_addchannel(message: Message, command: CommandObject) -> None:
         )
         return
 
-    # Verify the bot can check membership in this channel.
+    # Verify bot can check membership.
     try:
         await message.bot.get_chat_member(channel_id, message.bot.id)
     except Exception as exc:
         await message.answer(
             "❌ The bot cannot check membership in this channel.\n"
-            "Add the bot as an administrator and try again.\n\n"
+            "Add the bot as an administrator (with 'View Members' permission) and try again.\n\n"
             f"<i>{exc}</i>"
         )
         return
+
+    # For private channels, generate an invite link.
+    invite_link: str | None = None
+    if channel_username is None:
+        try:
+            link_obj = await message.bot.create_chat_invite_link(
+                chat_id=channel_id,
+                name="TeamJB Force-Sub",
+                creates_join_request=False,
+            )
+            invite_link = link_obj.invite_link
+        except Exception as exc:
+            await message.answer(
+                "❌ Could not create an invite link for this private channel.\n"
+                "Make sure the bot has the 'Invite Users via Link' admin permission.\n\n"
+                f"<i>{exc}</i>"
+            )
+            return
 
     result = await db.force_sub_channels.update_one(
         {"channel_id": channel_id},
@@ -280,6 +290,7 @@ async def cmd_addchannel(message: Message, command: CommandObject) -> None:
             "$set": {
                 "channel_id": channel_id,
                 "channel_username": channel_username,
+                "invite_link": invite_link,
                 "is_active": True,
                 "added_by": message.from_user.id,
                 "added_at": datetime.now(timezone.utc),
@@ -288,13 +299,13 @@ async def cmd_addchannel(message: Message, command: CommandObject) -> None:
         upsert=True,
     )
     action = "updated" if result.upserted_id is None else "added"
-    logger.info("Force-sub channel %s %s by owner", channel_id, action)
+
+    link_display = invite_link if invite_link else f"https://t.me/{channel_username}"
     await message.answer(
         f"✅ Force-sub channel <b>{action}</b>:\n"
         f"ID: <code>{channel_id}</code>\n"
-        f"Username: @{channel_username}" if channel_username else
-        f"✅ Force-sub channel <b>{action}</b>:\n"
-        f"ID: <code>{channel_id}</code>"
+        f"Username: @{channel_username if channel_username else '(private)'}\n"
+        f"Invite link: {link_display}"
     )
 
 
