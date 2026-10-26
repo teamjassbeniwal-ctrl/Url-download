@@ -1,9 +1,7 @@
 """
-Team JB Downloader Bot — Callback query handlers for the main menu.
+Team JB Downloader Bot — Callback query handlers.
 
-Handles taps on the inline keyboard buttons defined in utils/keyboards.py.
-Each callback is prefixed 'menu:' to keep future callback namespaces
-(e.g. 'dl:', 'admin:') separate.
+Handles the main menu and force-subscribe verification.
 """
 
 from __future__ import annotations
@@ -13,6 +11,8 @@ import logging
 from aiogram import F, Router
 from aiogram.types import CallbackQuery
 
+from config import settings
+from database import db
 from utils.keyboards import back_to_menu_keyboard, main_menu_keyboard
 from utils.messages import ABOUT_MESSAGE, HELP_MESSAGE, MAIN_MENU_MESSAGE
 
@@ -20,8 +20,6 @@ logger = logging.getLogger(__name__)
 
 router = Router(name="callbacks")
 
-# Placeholder content for menu entries whose full implementations arrive in
-# later parts. Each message clearly tells the user the feature is coming.
 _HOWTO_TEXT = (
     "📥 <b>How to Download</b>\n\n"
     "1. Copy a URL from any supported source.\n"
@@ -107,3 +105,52 @@ async def show_refer(call: CallbackQuery) -> None:
         disable_web_page_preview=True,
     )
     await call.answer()
+
+
+# ── Force-subscribe verification ──────────────────────────────────────────
+
+_JOINED_STATUSES = {"member", "administrator", "creator"}
+
+
+@router.callback_query(F.data == "fsub:verify")
+async def fsub_verify(call: CallbackQuery, bot) -> None:
+    """
+    Re-check channel membership after the user taps Verify.
+
+    If all channels are joined, show the main menu. Otherwise, re-show the
+    join prompt with an alert.
+    """
+    channels = [doc async for doc in db.force_sub_channels.find({"is_active": True})]
+
+    missing = []
+    for ch in channels:
+        try:
+            member = await bot.get_chat_member(
+                chat_id=ch["channel_id"], user_id=call.from_user.id
+            )
+            status = getattr(member, "status", None)
+            status_str = status if isinstance(status, str) else getattr(status, "value", None)
+            if status_str not in _JOINED_STATUSES:
+                missing.append(ch)
+        except Exception:
+            logger.warning(
+                "fsub_verify: cannot check user %d in channel %s",
+                call.from_user.id, ch["channel_id"],
+            )
+            # Fail open on check errors.
+            continue
+
+    if not missing:
+        await call.message.edit_text(
+            text=f"✅ Verification complete. Welcome, <b>{call.from_user.first_name}</b>!\n\n"
+                 "Send a URL to start downloading, or use the menu below.",
+            reply_markup=main_menu_keyboard(),
+            disable_web_page_preview=True,
+        )
+        await call.answer("✅ Verified!")
+        return
+
+    await call.answer(
+        f"❌ You have not joined {len(missing)} channel(s) yet.",
+        show_alert=True,
+    )
