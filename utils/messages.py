@@ -33,11 +33,17 @@ HELP_MESSAGE = (
     "• /myplan — your current plan\n"
     "• /premium — premium benefits\n"
     "• /getpremium — how to buy premium\n"
+    "• /redeem — redeem a coupon code\n"
     "• /refer — your referral link (coming soon)\n"
     "• /referrals — your referral list (coming soon)\n\n"
     "👑 <b>Owner commands</b>\n"
     "• /owner, /stats, /ban, /unban, /broadcast, /restart\n"
-    "• /addchannel, /removechannel, /channels\n\n"
+    "• /addchannel, /removechannel, /channels\n"
+    "• /addpremium, /removepremium, /premiumusers\n"
+    "• /generatecoupon, /coupons, /deletecoupon\n"
+    "• /expirenow\n\n"
+    "🎟️ <b>Redeem a coupon</b>\n"
+    "• /redeem CODE\n\n"
     "❓ If a URL fails, make sure it is public and not DRM-protected."
 )
 
