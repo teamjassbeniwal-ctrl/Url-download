@@ -1,8 +1,5 @@
 """
 Team JB Downloader Bot — Message templates.
-
-Centralizes user-facing text so wording can be updated in one place.
-Uses HTML formatting to match ParseMode.HTML set in main.py.
 """
 
 from __future__ import annotations
@@ -36,8 +33,11 @@ HELP_MESSAGE = (
     "• /refer — your referral link (coming soon)\n"
     "• /referrals — your referral list (coming soon)\n\n"
     "👑 <b>Owner commands</b>\n"
-    "• /owner — owner dashboard (coming soon)\n"
-    "• /stats — bot statistics (coming soon)\n\n"
+    "• /owner — owner dashboard\n"
+    "• /stats — bot statistics\n"
+    "• /ban, /unban — user management\n"
+    "• /broadcast — message all users\n"
+    "• /restart — restart the bot\n\n"
     "❓ If a URL fails, make sure it is public and not DRM-protected."
 )
 
@@ -55,3 +55,9 @@ ABOUT_MESSAGE = (
 )
 
 BACK_TO_MENU_BUTTON = "⬅️ Back to Menu"
+
+OWNER_DASHBOARD_MESSAGE = (
+    "👑 <b>Owner Dashboard</b>\n\n"
+    "Welcome back, boss. Use the buttons below for quick actions, "
+    "or the commands listed in /help."
+)
