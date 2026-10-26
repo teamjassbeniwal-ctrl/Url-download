@@ -12,7 +12,7 @@ from aiogram import F, Router
 from aiogram.types import (
     CallbackQuery,
     ChatMemberAdministrator,
-    ChatMemberCreator,
+    ChatMemberOwner,
     ChatMemberMember,
     ChatMemberRestricted,
 )
@@ -117,7 +117,7 @@ async def show_refer(call: CallbackQuery) -> None:
 
 def _is_joined_verify(member) -> bool:
     """Return True for statuses that mean the user is currently a member."""
-    if isinstance(member, (ChatMemberCreator, ChatMemberAdministrator, ChatMemberMember)):
+    if isinstance(member, (ChatMemberOwner, ChatMemberAdministrator, ChatMemberMember)):
         return True
     if isinstance(member, ChatMemberRestricted):
         return member.is_member
