@@ -49,3 +49,15 @@ def owner_dashboard_keyboard() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="❌ Close", callback_data="admin:close"),
     )
     return builder.as_markup()
+
+
+def plans_overview_keyboard() -> InlineKeyboardMarkup:
+    """Buttons shown alongside /plans, /premium, /myplan."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="🛒 How to Buy", callback_data="menu:getpremium"),
+    )
+    builder.row(
+        InlineKeyboardButton(text="⬅️ Back to Menu", callback_data="menu:main"),
+    )
+    return builder.as_markup()
