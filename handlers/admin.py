@@ -357,3 +357,17 @@ async def cmd_channels(message: Message) -> None:
         else:
             lines.append(f"{marker} <code>{cid}</code> (private)")
     await message.answer("\n".join(lines))
+
+# ── /expirenow ────────────────────────────────────────────────────────────
+
+@router.message(Command("expirenow"), OwnerOnly())
+async def cmd_expirenow(message: Message) -> None:
+    """Manually run the subscription expiry cleanup."""
+    from services.subscription import expire_subscriptions_once
+    count = await expire_subscriptions_once()
+    await message.answer(f"✅ Expired <b>{count}</b> subscription(s).")
+
+
+@router.message(Command("expirenow"))
+async def cmd_expirenow_reject(message: Message) -> None:
+    await reject_not_owner(message)
