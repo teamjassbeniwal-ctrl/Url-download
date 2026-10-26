@@ -19,7 +19,8 @@ from database import db
 from handlers import admin as admin_router
 from handlers import callbacks as callbacks_router
 from handlers import start as start_router
-from health import start_health_serverfrom middlewares.auth import OwnerRejectMiddleware
+from health import start_health_server
+from middlewares.auth import OwnerRejectMiddleware
 from middlewares.ban_check import BanCheckMiddleware
 from middlewares.force_sub import ForceSubMiddleware
 from middlewares.user_register import UserRegisterMiddleware
