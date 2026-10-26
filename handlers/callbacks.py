@@ -118,6 +118,8 @@ async def fsub_verify(call: CallbackQuery, bot) -> None:
     channels = [doc async for doc in db.force_sub_channels.find({"is_active": True})]
 
     missing = []
+    permission_error = None
+
     for ch in channels:
         try:
             member = await bot.get_chat_member(
@@ -130,7 +132,19 @@ async def fsub_verify(call: CallbackQuery, bot) -> None:
                 "fsub_verify CHECK FAILED | user=%d | channel=%s | %s: %s",
                 call.from_user.id, ch["channel_id"], type(exc).__name__, exc,
             )
-            missing.append(ch)
+            error_str = str(exc).lower()
+            if "not enough rights" in error_str or "forbidden" in error_str:
+                permission_error = exc
+            else:
+                missing.append(ch)
+
+    if permission_error is not None and not missing:
+        await call.answer(
+            "⚠️ The bot cannot verify membership right now. "
+            "Please contact the bot owner.",
+            show_alert=True,
+        )
+        return
 
     if not missing:
         await call.message.edit_text(
@@ -143,6 +157,7 @@ async def fsub_verify(call: CallbackQuery, bot) -> None:
         return
 
     await call.answer(
-        f"❌ You have not joined {len(missing)} channel(s) yet.",
+        f"❌ You have not joined {len(missing)} channel(s) yet. "
+        "Please join and tap Verify again.",
         show_alert=True,
     )
