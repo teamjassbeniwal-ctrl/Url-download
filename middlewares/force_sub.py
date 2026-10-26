@@ -10,7 +10,7 @@ from aiogram.types import (
     CallbackQuery,
     ChatMemberAdministrator,
     ChatMemberBanned,
-    ChatMemberCreator,
+    ChatMemberOwner,
     ChatMemberLeft,
     ChatMemberMember,
     ChatMemberRestricted,
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 def _is_joined(member) -> bool:
-    if isinstance(member, (ChatMemberCreator, ChatMemberAdministrator, ChatMemberMember)):
+    if isinstance(member, (ChatMemberOwner, ChatMemberAdministrator, ChatMemberMember)):
         return True
     if isinstance(member, ChatMemberRestricted):
         return member.is_member
