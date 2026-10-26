@@ -1,4 +1,4 @@
-"""Team JB Downloader Bot — Entry point. Python 3.12."""
+"""Team JB Downloader Bot — Application Entry Point. Part 2."""
 
 from __future__ import annotations
 
@@ -12,9 +12,12 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
 from aiogram.enums import ParseMode
+from aiogram.fsm.storage.pymongo import PyMongoStorage
 
 from config import settings
+from database import db
 from health import start_health_server
+from middlewares.user_register import UserRegisterMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -40,15 +43,12 @@ def configure_logging() -> None:
 
 def build_bot() -> Bot:
     if settings.uses_local_api:
-        session = AiohttpSession(
-            api=TelegramAPIServer.from_base(settings.telegram_api_server),
-        )
+        session = AiohttpSession(api=TelegramAPIServer.from_base(settings.telegram_api_server))
         logger.info("Local Bot API Server: %s (limit %d MB)",
                     settings.telegram_api_server, settings.effective_upload_limit_mb)
     else:
         session = AiohttpSession()
-        logger.warning("Public API in use. Upload limit: %d MB.",
-                       settings.effective_upload_limit_mb)
+        logger.warning("Public API in use. Upload limit: %d MB.", settings.effective_upload_limit_mb)
 
     return Bot(
         token=settings.bot_token,
@@ -61,15 +61,28 @@ async def run() -> None:
     configure_logging()
     settings.ensure_directories()
 
-    logger.info("Starting Team JB Downloader Bot (Part 1 foundation)")
+    logger.info("Starting Team JB Downloader Bot (Part 2)")
     logger.info("Owner ID: %d", settings.owner_id)
     logger.info("MongoDB URI: %s", settings.redacted_mongodb_uri)
     logger.info("MongoDB database: %s", settings.mongodb_database)
 
+    try:
+        await db.connect()
+    except Exception:
+        logger.exception("Failed to connect to MongoDB. Aborting startup.")
+        raise
+
+    fsm_storage = PyMongoStorage(
+        client=db.client,
+        db_name=settings.mongodb_database,
+        collection_name="fsm_states",
+    )
+
     health_runner = await start_health_server(settings.health_port)
 
     bot = build_bot()
-    dp = Dispatcher()
+    dp = Dispatcher(storage=fsm_storage)
+    dp.update.outer_middleware(UserRegisterMiddleware())
 
     shutdown_event = asyncio.Event()
 
@@ -94,13 +107,20 @@ async def run() -> None:
     try:
         await shutdown_event.wait()
     finally:
+        logger.info("Stopping polling...")
         await dp.stop_polling()
         polling_task.cancel()
         try:
             await polling_task
         except asyncio.CancelledError:
             pass
+        logger.info("Closing FSM storage...")
+        await fsm_storage.close()
+        logger.info("Closing MongoDB...")
+        await db.close()
+        logger.info("Closing bot session...")
         await bot.session.close()
+        logger.info("Stopping health server...")
         await health_runner.cleanup()
         logger.info("Shutdown complete")
 
@@ -111,7 +131,7 @@ def main() -> None:
     except KeyboardInterrupt:
         pass
     except Exception:
-        logging.getLogger(__name__).exception("Fatal error")
+        logging.getLogger(__name__).exception("Fatal error during startup")
         sys.exit(1)
 
 
