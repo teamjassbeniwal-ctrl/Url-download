@@ -114,7 +114,6 @@ async def show_refer(call: CallbackQuery) -> None:
 
 @router.callback_query(F.data == "fsub:verify")
 async def fsub_verify(call: CallbackQuery, bot) -> None:
-    """Re-check membership after the user taps Verify."""
     channels = [doc async for doc in db.force_sub_channels.find({"is_active": True})]
 
     missing = []
