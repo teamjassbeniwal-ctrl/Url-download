@@ -9,7 +9,13 @@ from __future__ import annotations
 import logging
 
 from aiogram import F, Router
-from aiogram.types import CallbackQuery
+from aiogram.types import (
+    CallbackQuery,
+    ChatMemberAdministrator,
+    ChatMemberCreator,
+    ChatMemberMember,
+    ChatMemberRestricted,
+)
 
 from config import settings
 from database import db
@@ -109,16 +115,20 @@ async def show_refer(call: CallbackQuery) -> None:
 
 # ── Force-subscribe verification ──────────────────────────────────────────
 
-_JOINED_STATUSES = {"member", "administrator", "creator"}
+def _is_joined_verify(member) -> bool:
+    """Return True for statuses that mean the user is currently a member."""
+    if isinstance(member, (ChatMemberCreator, ChatMemberAdministrator, ChatMemberMember)):
+        return True
+    if isinstance(member, ChatMemberRestricted):
+        return member.is_member
+    return False
 
 
 @router.callback_query(F.data == "fsub:verify")
 async def fsub_verify(call: CallbackQuery, bot) -> None:
     """
     Re-check channel membership after the user taps Verify.
-
-    If all channels are joined, show the main menu. Otherwise, re-show the
-    join prompt with an alert.
+    If all channels are joined, show the main menu. Otherwise, alert.
     """
     channels = [doc async for doc in db.force_sub_channels.find({"is_active": True})]
 
@@ -128,17 +138,14 @@ async def fsub_verify(call: CallbackQuery, bot) -> None:
             member = await bot.get_chat_member(
                 chat_id=ch["channel_id"], user_id=call.from_user.id
             )
-            status = getattr(member, "status", None)
-            status_str = status if isinstance(status, str) else getattr(status, "value", None)
-            if status_str not in _JOINED_STATUSES:
+            if not _is_joined_verify(member):
                 missing.append(ch)
-        except Exception:
-            logger.warning(
-                "fsub_verify: cannot check user %d in channel %s",
-                call.from_user.id, ch["channel_id"],
+        except Exception as exc:
+            logger.error(
+                "fsub_verify: check failed for user %d in %s: %s",
+                call.from_user.id, ch["channel_id"], exc,
             )
-            # Fail open on check errors.
-            continue
+            missing.append(ch)
 
     if not missing:
         await call.message.edit_text(
