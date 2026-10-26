@@ -1,4 +1,4 @@
-"""Team JB Downloader Bot — Application Entry Point. Part 5 (final force-sub fix)."""
+"""Team JB Downloader Bot — Application Entry Point. Part 6."""
 
 from __future__ import annotations
 
@@ -18,12 +18,14 @@ from config import settings
 from database import db
 from handlers import admin as admin_router
 from handlers import callbacks as callbacks_router
+from handlers import premium as premium_router
 from handlers import start as start_router
 from health import start_health_server
 from middlewares.auth import OwnerRejectMiddleware
 from middlewares.ban_check import BanCheckMiddleware
 from middlewares.force_sub import ForceSubMiddleware
 from middlewares.user_register import UserRegisterMiddleware
+from services.subscription import subscription_expiry_worker
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +69,7 @@ async def run() -> None:
     configure_logging()
     settings.ensure_directories()
 
-    logger.info("Starting Team JB Downloader Bot (Part 5)")
+    logger.info("Starting Team JB Downloader Bot (Part 6)")
     logger.info("Owner ID: %d", settings.owner_id)
     logger.info("MongoDB URI: %s", settings.redacted_mongodb_uri)
     logger.info("MongoDB database: %s", settings.mongodb_database)
@@ -89,24 +91,28 @@ async def run() -> None:
     bot = build_bot()
     dp = Dispatcher(storage=fsm_storage)
 
-    # ── Middlewares ───────────────────────────────────────────────────────
-    # update-level middlewares run for every update type.
+    # Middlewares
     dp.update.outer_middleware(UserRegisterMiddleware())
     dp.update.outer_middleware(BanCheckMiddleware())
     dp.update.middleware(OwnerRejectMiddleware())
 
-    # Force-sub must be registered separately on message and callback_query.
-    # Registering only on dp.update does not reliably catch CallbackQuery.
     force_sub = ForceSubMiddleware()
     dp.message.outer_middleware(force_sub)
     dp.callback_query.outer_middleware(force_sub)
 
-    # ── Routers ───────────────────────────────────────────────────────────
+    # Routers
     dp.include_router(start_router.router)
     dp.include_router(callbacks_router.router)
     dp.include_router(admin_router.router)
+    dp.include_router(premium_router.router)
 
-    # ── Graceful shutdown ─────────────────────────────────────────────────
+    # Background: subscription expiry
+    expiry_task = asyncio.create_task(
+        subscription_expiry_worker(3600),
+        name="subscription-expiry",
+    )
+
+    # Graceful shutdown
     shutdown_event = asyncio.Event()
 
     def _request_shutdown(sig: int) -> None:
@@ -120,7 +126,7 @@ async def run() -> None:
         except NotImplementedError:
             signal.signal(sig, lambda s, _: _request_shutdown(s))
 
-    # ── Polling ───────────────────────────────────────────────────────────
+    # Polling
     polling_task = asyncio.create_task(
         dp.start_polling(bot, handle_signals=False),
         name="aiogram-polling",
@@ -138,6 +144,14 @@ async def run() -> None:
             await polling_task
         except asyncio.CancelledError:
             pass
+
+        logger.info("Stopping expiry worker...")
+        expiry_task.cancel()
+        try:
+            await expiry_task
+        except asyncio.CancelledError:
+            pass
+
         logger.info("Closing FSM storage...")
         await fsm_storage.close()
         logger.info("Closing MongoDB...")
