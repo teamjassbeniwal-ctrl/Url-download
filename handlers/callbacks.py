@@ -22,6 +22,11 @@ from utils.keyboards import (
     main_menu_keyboard,
     plans_overview_keyboard,
 )
+from services.referral import (
+    build_referral_link,
+    get_referral_stats,
+)
+from services.subscription import PLANS
 from utils.messages import (
     ABOUT_MESSAGE,
     GETPREMIUM_MESSAGE,
@@ -114,9 +119,26 @@ async def show_getpremium(call: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data == "menu:refer")
-async def show_refer(call: CallbackQuery) -> None:
+async def show_refer(call: CallbackQuery, bot) -> None:
+    me = await bot.get_me()
+    link = build_referral_link(me.username or "", call.from_user.id)
+    stats = await get_referral_stats(call.from_user.id)
+
+    reward_plan = PLANS.get(settings.referral_reward_plan)
+    reward_name = reward_plan.display_name if reward_plan else settings.referral_reward_plan
+
+    text = (
+        "🎁 <b>Refer & Earn</b>\n\n"
+        f"Your link:\n<code>{link}</code>\n\n"
+        f"Reward: <b>{settings.referral_reward_days} days of {reward_name}</b> "
+        f"per qualifying referral.\n\n"
+        f"📊 Referrals: <b>{stats['total']}</b> "
+        f"(<b>{stats['rewarded']}</b> rewarded, "
+        f"<b>{stats['pending']}</b> pending)"
+    )
     await call.message.edit_text(
-        text=_REFER_TEXT, reply_markup=back_to_menu_keyboard(),
+        text=text,
+        reply_markup=back_to_menu_keyboard(),
         disable_web_page_preview=True,
     )
     await call.answer()
