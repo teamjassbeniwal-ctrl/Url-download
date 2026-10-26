@@ -1,10 +1,12 @@
 """
 Team JB Downloader Bot — Force-subscribe middleware.
 
-- Owner bypasses the check.
-- Users who genuinely have not joined see a Join Required prompt.
-- API errors are logged and treated as "not joined" so the prompt still shows.
-- /start and /help are whitelisted so users can reach the Verify button.
+Behavior:
+- Owner bypasses the check entirely.
+- /start and /help are whitelisted so users can always reach the prompt.
+- Genuine non-members see a Join Required message with Join + Verify buttons.
+- API errors (bot not admin, chat not found) are logged with full context
+  and shown as a temporary error instead of pretending the user is not joined.
 """
 
 from __future__ import annotations
@@ -35,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 
 def _is_member_object(member) -> bool:
-    """Return True only if the ChatMember object means the user is in the chat."""
+    """Return True only for statuses that mean the user is currently in the chat."""
     if isinstance(member, (ChatMemberOwner, ChatMemberAdministrator, ChatMemberMember)):
         return True
     if isinstance(member, ChatMemberRestricted):
@@ -57,11 +59,11 @@ class ForceSubMiddleware(BaseMiddleware):
         if user is None or user.is_bot or bot is None:
             return await handler(event, data)
 
-        # 1. Owner bypasses force-subscribe.
+        # 1. Owner bypass.
         if user.id == settings.owner_id:
             return await handler(event, data)
 
-        # 2. Whitelisted updates (/start, /help, fsub: callbacks) pass through.
+        # 2. Whitelist /start, /help, and fsub: callbacks.
         if self._is_whitelisted(event):
             return await handler(event, data)
 
@@ -69,14 +71,16 @@ class ForceSubMiddleware(BaseMiddleware):
         try:
             channels = [doc async for doc in db.force_sub_channels.find({"is_active": True})]
         except Exception:
-            logger.exception("Force-sub: failed to load channels from MongoDB")
-            return await handler(event, data)
+            logger.exception("Force-sub: MongoDB error loading channels")
+            return await handler(event, data)  # Do not block on DB failure.
 
         if not channels:
             return await handler(event, data)
 
         # 4. Check each channel.
-        missing = []
+        missing: list[dict] = []
+        permission_error: Exception | None = None
+
         for ch in channels:
             channel_id = ch.get("channel_id")
             try:
@@ -84,21 +88,31 @@ class ForceSubMiddleware(BaseMiddleware):
                 if not _is_member_object(member):
                     missing.append(ch)
             except Exception as exc:
-                # API error (bot not admin, chat not found, etc.)
-                # Log the full context for diagnosis, then treat as not joined
-                # so the user still sees a usable prompt.
                 logger.error(
-                    "Force-sub CHECK FAILED | user=%d | channel=%s | error=%s: %s",
+                    "Force-sub CHECK FAILED | user=%d | channel=%s | %s: %s",
                     user.id, channel_id, type(exc).__name__, exc,
                 )
-                missing.append(ch)
+                # Distinguish permission errors from other failures.
+                error_str = str(exc).lower()
+                if "not enough rights" in error_str or "forbidden" in error_str:
+                    permission_error = exc
+                else:
+                    # Chat not found, bot removed, etc. Treat as not joined so
+                    # the user still sees a prompt and the owner sees the log.
+                    missing.append(ch)
 
-        if not missing:
-            return await handler(event, data)
+        # 5. If a permission error occurred, show a temporary error.
+        if permission_error is not None and not missing:
+            await self._send_temp_error(event)
+            return None
 
-        # 5. Block and show the join prompt.
-        await self._send_join_prompt(event, missing)
-        return None
+        # 6. If missing, show the join prompt.
+        if missing:
+            await self._send_join_prompt(event, missing)
+            return None
+
+        # 7. All checks passed.
+        return await handler(event, data)
 
     @staticmethod
     def _is_whitelisted(event: TelegramObject) -> bool:
@@ -134,8 +148,8 @@ class ForceSubMiddleware(BaseMiddleware):
 
         text = (
             "🔒 <b>Join Required</b>\n\n"
-            "To use Team JB Downloader, please join the channel(s) below, "
-            "then tap <b>I've Joined</b>."
+            "Please join our channel to use this bot.\n\n"
+            "After joining, tap <b>I've Joined</b> below."
         )
 
         if isinstance(event, Message):
@@ -153,3 +167,15 @@ class ForceSubMiddleware(BaseMiddleware):
                     disable_web_page_preview=True,
                 )
             await event.answer("Please join the channel first.", show_alert=True)
+
+    async def _send_temp_error(self, event: TelegramObject) -> None:
+        text = (
+            "⚠️ <b>Temporary Error</b>\n\n"
+            "The bot cannot verify channel membership right now. "
+            "This usually means the bot is not an administrator in the required channel.\n\n"
+            "Please contact the bot owner."
+        )
+        if isinstance(event, Message):
+            await event.answer(text)
+        elif isinstance(event, CallbackQuery):
+            await event.answer(text, show_alert=True)
