@@ -17,6 +17,7 @@ from services.subscription import (
     get_active_plan,
     get_active_subscription,
 )
+from services.referral import parse_referral_payload, record_referral
 from utils.keyboards import (
     back_to_menu_keyboard,
     help_close_keyboard,
@@ -40,21 +41,31 @@ router = Router(name="start")
 # ── /start ────────────────────────────────────────────────────────────────
 
 @router.message(CommandStart(deep_link=True))
-async def start_with_deep_link(message: Message, command: CommandObject) -> None:
+async def start_with_deep_link(message: Message, command: CommandObject, bot) -> None:
     payload = (command.args or "").strip()
-    if payload and message.from_user is not None:
-        try:
-            await db.users.update_one(
-                {"telegram_id": message.from_user.id},
-                {"$set": {"start_payload": payload}},
-            )
-            logger.info("Recorded start payload '%s' for user %d",
-                        payload, message.from_user.id)
-        except Exception:
-            logger.exception("Failed to store start payload for user %d",
-                             message.from_user.id)
-    await _send_welcome(message)
+    user = message.from_user
 
+    if payload and user is not None:
+        # Referral payload?
+        referrer_id = parse_referral_payload(payload)
+        if referrer_id is not None:
+            success, reason = await record_referral(referrer_id, user.id)
+            if success:
+                logger.info("User %d joined via referral from %d",
+                            user.id, referrer_id)
+            else:
+                logger.info("Referral ignored for user %d: %s", user.id, reason)
+        else:
+            # Non-referral payload: store for other uses (Part 3 behavior).
+            try:
+                await db.users.update_one(
+                    {"telegram_id": user.id},
+                    {"$set": {"start_payload": payload}},
+                )
+            except Exception:
+                logger.exception("Failed to store start payload for user %d", user.id)
+
+    await _send_welcome(message)
 
 @router.message(CommandStart())
 async def start_plain(message: Message) -> None:
