@@ -17,8 +17,19 @@ from aiogram.types import (
 
 from config import settings
 from database import db
-from utils.keyboards import back_to_menu_keyboard, main_menu_keyboard
-from utils.messages import ABOUT_MESSAGE, HELP_MESSAGE, MAIN_MENU_MESSAGE
+from utils.keyboards import (
+    back_to_menu_keyboard,
+    main_menu_keyboard,
+    plans_overview_keyboard,
+)
+from utils.messages import (
+    ABOUT_MESSAGE,
+    GETPREMIUM_MESSAGE,
+    HELP_MESSAGE,
+    MAIN_MENU_MESSAGE,
+    PLANS_OVERVIEW_MESSAGE,
+    PREMIUM_BENEFITS_MESSAGE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,16 +52,6 @@ _HOWTO_TEXT = (
     "4. Choose a format (video, audio, or document).\n"
     "5. Wait for the upload to complete.\n\n"
     "<i>URL analysis and downloads will be activated in a later update.</i>"
-)
-
-_PREMIUM_TEXT = (
-    "💎 <b>Premium Plans</b>\n\n"
-    "Premium unlocks:\n"
-    "• Higher daily download limits\n"
-    "• Larger file sizes\n"
-    "• Priority queue\n"
-    "• More concurrent downloads\n\n"
-    "<i>Plan details and subscription commands will be activated in a later update.</i>"
 )
 
 _REFER_TEXT = (
@@ -97,7 +98,16 @@ async def show_howto(call: CallbackQuery) -> None:
 @router.callback_query(F.data == "menu:premium")
 async def show_premium(call: CallbackQuery) -> None:
     await call.message.edit_text(
-        text=_PREMIUM_TEXT, reply_markup=back_to_menu_keyboard(),
+        text=PREMIUM_BENEFITS_MESSAGE, reply_markup=plans_overview_keyboard(),
+        disable_web_page_preview=True,
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data == "menu:getpremium")
+async def show_getpremium(call: CallbackQuery) -> None:
+    await call.message.edit_text(
+        text=GETPREMIUM_MESSAGE, reply_markup=back_to_menu_keyboard(),
         disable_web_page_preview=True,
     )
     await call.answer()
@@ -111,6 +121,8 @@ async def show_refer(call: CallbackQuery) -> None:
     )
     await call.answer()
 
+
+# ── Force-subscribe verification ──────────────────────────────────────────
 
 @router.callback_query(F.data == "fsub:verify")
 async def fsub_verify(call: CallbackQuery, bot) -> None:
