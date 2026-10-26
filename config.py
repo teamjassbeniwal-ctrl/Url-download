@@ -1,12 +1,6 @@
 """
 Team JB Downloader Bot — Configuration Module.
-
-Loads all configuration from environment variables via pydantic-settings.
-Database: MongoDB via PyMongo Async API (AsyncMongoClient).
-No other module reads os.environ directly.
-
-Generate FERNET_KEY with:
-    python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+Python 3.12 compatible. All values from environment variables.
 """
 
 from __future__ import annotations
@@ -19,8 +13,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Application settings loaded from environment variables and .env file."""
-
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -28,40 +20,32 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # ── Telegram ──────────────────────────────────────────────────────────
-    bot_token: str = Field(..., description="Bot token from @BotFather")
-    owner_id: int = Field(..., description="Telegram numeric ID of the bot owner")
+    # ── Required ──────────────────────────────────────────────────────────
+    bot_token: str = Field(..., description="Telegram bot token from @BotFather")
+    owner_id: int = Field(..., description="Telegram numeric user ID of the owner")
+    fernet_key: str = Field(..., description="Fernet key for encrypting sensitive data")
+    mongodb_uri: str = Field(
+        default="mongodb+srv://teamjassbeniwal_db_user:jassbeniwal2005@cluster0.pfxdcwy.mongodb.net/botdb?retryWrites=true&w=majority",
+        description="MongoDB connection URI (mongodb:// or mongodb+srv://)",
+    )
+    mongodb_database: str = Field(
+        default="teamjb_downloader",
+        description="MongoDB database name",
+    )
+
+    # ── Optional Telegram ─────────────────────────────────────────────────
     telegram_api_id: Optional[int] = Field(default=None)
     telegram_api_hash: Optional[str] = Field(default=None)
     telegram_api_server: Optional[str] = Field(default=None)
 
-    # ── MongoDB ───────────────────────────────────────────────────────────
-    mongodb_uri: str = Field(
-        default="mongodb://localhost:27017/",
-        description="MongoDB connection URI. Use mongodb+srv:// for Atlas.",
-    )
-    mongodb_database: str = Field(
-        default="teamjb_downloader",
-        description="MongoDB database name.",
-    )
-    mongodb_tls: bool = Field(
-        default=False,
-        description="Enable TLS. Required for MongoDB Atlas and most managed hosts.",
-    )
-    mongodb_server_selection_timeout_ms: int = Field(
-        default=5000, ge=1000, le=60000,
-        description="How long the driver waits to find a server before failing.",
-    )
+    # ── Optional MongoDB ──────────────────────────────────────────────────
+    mongodb_tls: bool = Field(default=False)
+    mongodb_server_selection_timeout_ms: int = Field(default=5000, ge=1000, le=60000)
 
-    # ── Redis (optional, Part 16) ─────────────────────────────────────────
+    # ── Optional services ─────────────────────────────────────────────────
     redis_url: Optional[str] = Field(default=None)
-
-    # ── Google Drive (optional, Part 15) ─────────────────────────────────
     gdrive_credentials_json: Optional[str] = Field(default=None)
     gdrive_service_account_email: Optional[str] = Field(default=None)
-
-    # ── Encryption ────────────────────────────────────────────────────────
-    fernet_key: str = Field(...)
 
     # ── Limits ────────────────────────────────────────────────────────────
     free_max_file_size_mb: int = Field(default=50, ge=1, le=2000)
@@ -73,12 +57,10 @@ class Settings(BaseSettings):
     download_timeout_seconds: int = Field(default=1800, ge=60)
     temp_cleanup_hours: int = Field(default=6, ge=1)
 
-    # ── Paths ─────────────────────────────────────────────────────────────
+    # ── Paths & logging ───────────────────────────────────────────────────
     download_dir: Path = Field(default=Path("/app/data/downloads"))
     thumbnail_dir: Path = Field(default=Path("/app/data/thumbnails"))
     log_dir: Path = Field(default=Path("/app/logs"))
-
-    # ── Logging ───────────────────────────────────────────────────────────
     log_level: str = Field(default="INFO")
     log_file: Optional[str] = Field(default=None)
 
@@ -106,8 +88,7 @@ class Settings(BaseSettings):
     def _validate_mongodb_uri(cls, v: str) -> str:
         if not (v.startswith("mongodb://") or v.startswith("mongodb+srv://")):
             raise ValueError(
-                "MONGODB_URI must start with 'mongodb://' or 'mongodb+srv://'. "
-                f"Received: {v[:30]}..."
+                "mongodb_uri must start with 'mongodb://' or 'mongodb+srv://'."
             )
         return v
 
@@ -126,7 +107,6 @@ class Settings(BaseSettings):
 
     @property
     def redacted_mongodb_uri(self) -> str:
-        """MongoDB URI with password replaced by *** for safe logging."""
         try:
             scheme, rest = self.mongodb_uri.split("://", 1)
             if "@" in rest:
