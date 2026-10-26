@@ -1,5 +1,5 @@
 """
-Team JB Downloader Bot — Force-subscribe middleware. Corrected.
+Team JB Downloader Bot — Force-subscribe middleware. aiogram 3.x correct version.
 """
 
 from __future__ import annotations
@@ -8,7 +8,19 @@ import logging
 from typing import Any, Awaitable, Callable
 
 from aiogram import BaseMiddleware
-from aiogram.types import CallbackQuery, InlineKeyboardButton, Message, TelegramObject, User
+from aiogram.types import (
+    CallbackQuery,
+    ChatMemberAdministrator,
+    ChatMemberBanned,
+    ChatMemberCreator,
+    ChatMemberLeft,
+    ChatMemberMember,
+    ChatMemberRestricted,
+    InlineKeyboardButton,
+    Message,
+    TelegramObject,
+    User,
+)
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import settings
@@ -16,7 +28,15 @@ from database import db
 
 logger = logging.getLogger(__name__)
 
-_JOINED_STATUSES = {"member", "administrator", "creator"}
+
+def _is_joined(member) -> bool:
+    """Return True only for statuses that mean 'currently in the channel'."""
+    if isinstance(member, (ChatMemberCreator, ChatMemberAdministrator, ChatMemberMember)):
+        return True
+    if isinstance(member, ChatMemberRestricted):
+        return member.is_member  # Restricted users can still be members
+    # ChatMemberLeft and ChatMemberBanned are not joined
+    return False
 
 
 class ForceSubMiddleware(BaseMiddleware):
@@ -49,8 +69,18 @@ class ForceSubMiddleware(BaseMiddleware):
 
         missing = []
         for ch in channels:
-            joined = await self._is_joined(bot, ch, user.id)
-            if not joined:
+            channel_id = ch.get("channel_id")
+            try:
+                member = await bot.get_chat_member(chat_id=channel_id, user_id=user.id)
+                if not _is_joined(member):
+                    missing.append(ch)
+            except Exception as exc:
+                logger.error(
+                    "Force-sub CHECK FAILED for user %d in channel %s: %s: %s",
+                    user.id, channel_id, type(exc).__name__, exc,
+                )
+                # Do NOT fail open. If the check fails, treat as not joined so
+                # the user sees the prompt and the owner can see the error in logs.
                 missing.append(ch)
 
         if not missing:
@@ -71,54 +101,21 @@ class ForceSubMiddleware(BaseMiddleware):
             return (event.data or "").startswith("fsub:")
         return False
 
-    @staticmethod
-    async def _is_joined(bot, channel: dict, user_id: int) -> bool:
-        """
-        Check membership. Logs the exact error instead of failing open silently.
-        """
-        channel_id = channel.get("channel_id")
-        try:
-            member = await bot.get_chat_member(chat_id=channel_id, user_id=user_id)
-            status = getattr(member, "status", None)
-            if isinstance(status, str):
-                return status in _JOINED_STATUSES
-            return getattr(status, "value", None) in _JOINED_STATUSES
-        except Exception as exc:
-            # Log with the real exception so you can see WHY it failed.
-            logger.error(
-                "Force-sub CHECK FAILED for user %d in channel %s: %s: %s",
-                user_id, channel_id, type(exc).__name__, exc,
-            )
-            # Do NOT fail open silently. Return False so the user sees the join prompt.
-            # If the bot truly cannot check (e.g. not admin), the owner will see
-            # repeated errors in logs and must fix the bot's admin rights.
-            return False
-
     async def _send_join_prompt(self, event: TelegramObject, missing: list[dict]) -> None:
         builder = InlineKeyboardBuilder()
         for ch in missing:
-            link = ch.get("invite_link")
+            url = ch.get("invite_link")
             username = ch.get("channel_username")
-
-            # Prefer a stored invite link; fall back to public username.
-            url = None
-            if link:
-                url = link
-            elif username:
+            if not url and username:
                 url = f"https://t.me/{username.lstrip('@')}"
-
             if not url:
                 logger.error(
-                    "Force-sub: no usable link for channel %s. "
-                    "Re-add the channel with /addchannel so an invite link is stored.",
+                    "Force-sub: no link for channel %s. Re-add with /addchannel.",
                     ch.get("channel_id"),
                 )
                 continue
-
             label = username or "Channel"
-            builder.row(InlineKeyboardButton(
-                text=f"📢 Join {label}", url=url,
-            ))
+            builder.row(InlineKeyboardButton(text=f"📢 Join {label}", url=url))
 
         builder.row(InlineKeyboardButton(
             text="✅ I've Joined — Verify", callback_data="fsub:verify",
@@ -126,7 +123,7 @@ class ForceSubMiddleware(BaseMiddleware):
 
         text = (
             "🔒 <b>Join Required</b>\n\n"
-            "To use Team JB Downloader, please join our required channels below, "
+            "To use Team JB Downloader, please join the required channel(s) below, "
             "then tap <b>I've Joined</b>."
         )
 
@@ -144,4 +141,4 @@ class ForceSubMiddleware(BaseMiddleware):
                     text, reply_markup=builder.as_markup(),
                     disable_web_page_preview=True,
                 )
-            await event.answer("Please join the channels first.", show_alert=True)
+            await event.answer("Please join the channel first.", show_alert=True)
