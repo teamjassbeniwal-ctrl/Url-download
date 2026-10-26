@@ -1,4 +1,11 @@
-"""Team JB Downloader Bot — Force-subscribe middleware. aiogram 3.x correct version."""
+"""
+Team JB Downloader Bot — Force-subscribe middleware.
+
+- Owner bypasses the check.
+- Users who genuinely have not joined see a Join Required prompt.
+- API errors are logged and treated as "not joined" so the prompt still shows.
+- /start and /help are whitelisted so users can reach the Verify button.
+"""
 
 from __future__ import annotations
 
@@ -10,9 +17,9 @@ from aiogram.types import (
     CallbackQuery,
     ChatMemberAdministrator,
     ChatMemberBanned,
-    ChatMemberOwner,
     ChatMemberLeft,
     ChatMemberMember,
+    ChatMemberOwner,
     ChatMemberRestricted,
     InlineKeyboardButton,
     Message,
@@ -27,11 +34,13 @@ from database import db
 logger = logging.getLogger(__name__)
 
 
-def _is_joined(member) -> bool:
+def _is_member_object(member) -> bool:
+    """Return True only if the ChatMember object means the user is in the chat."""
     if isinstance(member, (ChatMemberOwner, ChatMemberAdministrator, ChatMemberMember)):
         return True
     if isinstance(member, ChatMemberRestricted):
         return member.is_member
+    # ChatMemberLeft and ChatMemberBanned are not members
     return False
 
 
@@ -48,31 +57,38 @@ class ForceSubMiddleware(BaseMiddleware):
         if user is None or user.is_bot or bot is None:
             return await handler(event, data)
 
+        # 1. Owner bypasses force-subscribe.
         if user.id == settings.owner_id:
             return await handler(event, data)
 
+        # 2. Whitelisted updates (/start, /help, fsub: callbacks) pass through.
         if self._is_whitelisted(event):
             return await handler(event, data)
 
+        # 3. Load active channels.
         try:
             channels = [doc async for doc in db.force_sub_channels.find({"is_active": True})]
         except Exception:
-            logger.exception("Force-sub: failed to load channels")
+            logger.exception("Force-sub: failed to load channels from MongoDB")
             return await handler(event, data)
 
         if not channels:
             return await handler(event, data)
 
+        # 4. Check each channel.
         missing = []
         for ch in channels:
             channel_id = ch.get("channel_id")
             try:
                 member = await bot.get_chat_member(chat_id=channel_id, user_id=user.id)
-                if not _is_joined(member):
+                if not _is_member_object(member):
                     missing.append(ch)
             except Exception as exc:
+                # API error (bot not admin, chat not found, etc.)
+                # Log the full context for diagnosis, then treat as not joined
+                # so the user still sees a usable prompt.
                 logger.error(
-                    "Force-sub CHECK FAILED for user %d in channel %s: %s: %s",
+                    "Force-sub CHECK FAILED | user=%d | channel=%s | error=%s: %s",
                     user.id, channel_id, type(exc).__name__, exc,
                 )
                 missing.append(ch)
@@ -80,6 +96,7 @@ class ForceSubMiddleware(BaseMiddleware):
         if not missing:
             return await handler(event, data)
 
+        # 5. Block and show the join prompt.
         await self._send_join_prompt(event, missing)
         return None
 
@@ -104,7 +121,7 @@ class ForceSubMiddleware(BaseMiddleware):
                 url = f"https://t.me/{username.lstrip('@')}"
             if not url:
                 logger.error(
-                    "Force-sub: no link for channel %s. Re-add with /addchannel.",
+                    "Force-sub: no usable link for channel %s. Re-add with /addchannel.",
                     ch.get("channel_id"),
                 )
                 continue
@@ -117,7 +134,7 @@ class ForceSubMiddleware(BaseMiddleware):
 
         text = (
             "🔒 <b>Join Required</b>\n\n"
-            "To use Team JB Downloader, please join the required channel(s) below, "
+            "To use Team JB Downloader, please join the channel(s) below, "
             "then tap <b>I've Joined</b>."
         )
 
