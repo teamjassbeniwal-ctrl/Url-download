@@ -1,53 +1,164 @@
 """
-Team JB Downloader Bot — Health Endpoint.
+Team JB Downloader Bot — Application Entry Point.
 
-Koyeb performs HTTP health checks and restarts services that do not respond.
-A Telegram polling bot does not listen on HTTP by itself, so this module runs
-a minimal aiohttp server alongside the bot.
-
-The health server is started as an asyncio task from main.py. It is intentionally
-thin: one route, one status code, no dependencies on the bot's internal state.
+Part 2 additions:
+- MongoDB connect/close lifecycle.
+- FSM storage backed by MongoDB (PyMongoStorage).
+- User registration middleware.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from typing import Optional
+import signal
+import sys
 
-from aiohttp import web
+from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.client.telegram import TelegramAPIServer
+from aiogram.enums import ParseMode
+from aiogram.fsm.storage.pymongo import PyMongoStorage
+
+from config import settings
+from database import db
+from health import start_health_server
+from middlewares.user_register import UserRegisterMiddleware
 
 logger = logging.getLogger(__name__)
 
 
-async def _health_handler(request: web.Request) -> web.Response:
-    """Return 200 OK with a small JSON body."""
-    return web.json_response({"status": "ok", "service": "team-jb-downloader"})
+def configure_logging() -> None:
+    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
+    if settings.log_file:
+        fh = logging.FileHandler(settings.log_file, encoding="utf-8")
+        fh.setFormatter(logging.Formatter(
+            "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
+        ))
+        handlers.append(fh)
+
+    logging.basicConfig(
+        level=getattr(logging, settings.log_level),
+        format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+        handlers=handlers,
+        force=True,
+    )
+    for noisy in ("aiogram.event", "aiohttp.access", "pymongo"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
-async def _root_handler(request: web.Request) -> web.Response:
-    """Root returns the same payload; useful for manual checks."""
-    return web.json_response({"status": "ok", "service": "team-jb-downloader"})
+def build_bot() -> Bot:
+    if settings.uses_local_api:
+        session = AiohttpSession(
+            api=TelegramAPIServer.from_base(settings.telegram_api_server),
+        )
+        logger.info("Local Bot API Server: %s (limit %d MB)",
+                    settings.telegram_api_server, settings.effective_upload_limit_mb)
+    else:
+        session = AiohttpSession()
+        logger.warning("Public API in use. Upload limit: %d MB.",
+                       settings.effective_upload_limit_mb)
+
+    return Bot(
+        token=settings.bot_token,
+        session=session,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
 
 
-def create_health_app() -> web.Application:
-    """Build the aiohttp application with health routes registered."""
-    app = web.Application()
-    app.router.add_get("/health", _health_handler)
-    app.router.add_get("/", _root_handler)
-    return app
+async def run() -> None:
+    configure_logging()
+    settings.ensure_directories()
+
+    logger.info("Starting Team JB Downloader Bot (Part 2)")
+    logger.info("Owner ID: %d", settings.owner_id)
+    logger.info("MongoDB URI: %s", settings.redacted_mongodb_uri)
+    logger.info("MongoDB database: %s", settings.mongodb_database)
+
+    # ── 1. Connect to MongoDB (aborts startup on failure) ─────────────────
+    try:
+        await db.connect()
+    except Exception:
+        logger.exception("Failed to connect to MongoDB. Aborting startup.")
+        raise
+
+    # ── 2. FSM storage backed by the same MongoDB client ──────────────────
+    fsm_storage = PyMongoStorage(
+        client=db.client,
+        db_name=settings.mongodb_database,
+        collection_name="fsm_states",
+    )
+
+    # ── 3. Health server (Koyeb requires this) ────────────────────────────
+    health_runner = await start_health_server(settings.health_port)
+
+    # ── 4. Bot and dispatcher ─────────────────────────────────────────────
+    bot = build_bot()
+    dp = Dispatcher(storage=fsm_storage)
+
+    # Register user registration middleware for all updates.
+    dp.update.outer_middleware(UserRegisterMiddleware())
+
+    # Handler routers will be registered in Part 3 onward.
+
+    # ── 5. Graceful shutdown wiring ───────────────────────────────────────
+    shutdown_event = asyncio.Event()
+
+    def _request_shutdown(sig: int) -> None:
+        logger.info("Received signal %s; shutting down", signal.Signals(sig).name)
+        shutdown_event.set()
+
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, _request_shutdown, sig)
+        except NotImplementedError:
+            signal.signal(sig, lambda s, _: _request_shutdown(s))
+
+    # ── 6. Start polling ──────────────────────────────────────────────────
+    polling_task = asyncio.create_task(
+        dp.start_polling(bot, handle_signals=False),
+        name="aiogram-polling",
+    )
+
+    logger.info("Bot running. Health: http://0.0.0.0:%d/health", settings.health_port)
+
+    try:
+        await shutdown_event.wait()
+    finally:
+        logger.info("Stopping polling...")
+        await dp.stop_polling()
+        polling_task.cancel()
+        try:
+            await polling_task
+        except asyncio.CancelledError:
+            pass
+
+        logger.info("Closing FSM storage...")
+        await fsm_storage.close()
+
+        logger.info("Closing MongoDB...")
+        await db.close()
+
+        logger.info("Closing bot session...")
+        await bot.session.close()
+
+        logger.info("Stopping health server...")
+        await health_runner.cleanup()
+
+        logger.info("Shutdown complete")
 
 
-async def start_health_server(port: int) -> web.AppRunner:
-    """
-    Start the health server on the given port.
+def main() -> None:
+    try:
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        pass
+    except Exception:
+        logging.getLogger(__name__).exception("Fatal error during startup")
+        sys.exit(1)
 
-    Returns the AppRunner so the caller can shut it down cleanly.
-    The caller is responsible for awaiting runner.cleanup() on shutdown.
-    """
-    app = create_health_app()
-    runner = web.AppRunner(app, access_log=None)
-    await runner.setup()
-    site = web.TCPSite(runner, host="0.0.0.0", port=port)
-    await site.start()
-    logger.info("Health server listening on 0.0.0.0:%d", port)
-    return runner
+
+if __name__ == "__main__":
+    main()
