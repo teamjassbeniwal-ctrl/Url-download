@@ -1,4 +1,4 @@
-"""Team JB Downloader Bot — Application Entry Point. Part 6."""
+"""Team JB Downloader Bot — Application Entry Point. Part 7."""
 
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ from database import db
 from handlers import admin as admin_router
 from handlers import callbacks as callbacks_router
 from handlers import premium as premium_router
+from handlers import premium_admin as premium_admin_router
 from handlers import start as start_router
 from health import start_health_server
 from middlewares.auth import OwnerRejectMiddleware
@@ -69,7 +70,7 @@ async def run() -> None:
     configure_logging()
     settings.ensure_directories()
 
-    logger.info("Starting Team JB Downloader Bot (Part 6)")
+    logger.info("Starting Team JB Downloader Bot (Part 7)")
     logger.info("Owner ID: %d", settings.owner_id)
     logger.info("MongoDB URI: %s", settings.redacted_mongodb_uri)
     logger.info("MongoDB database: %s", settings.mongodb_database)
@@ -105,6 +106,7 @@ async def run() -> None:
     dp.include_router(callbacks_router.router)
     dp.include_router(admin_router.router)
     dp.include_router(premium_router.router)
+    dp.include_router(premium_admin_router.router)
 
     # Background: subscription expiry
     expiry_task = asyncio.create_task(
