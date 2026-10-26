@@ -37,7 +37,8 @@ HELP_MESSAGE = (
     "• /stats — bot statistics\n"
     "• /ban, /unban — user management\n"
     "• /broadcast — message all users\n"
-    "• /restart — restart the bot\n\n"
+    "• /restart — restart the bot\n"
+    "• /addchannel, /removechannel, /channels — force-sub management\n\n"
     "❓ If a URL fails, make sure it is public and not DRM-protected."
 )
 
