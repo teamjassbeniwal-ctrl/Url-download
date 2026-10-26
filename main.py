@@ -1,9 +1,4 @@
-"""
-Team JB Downloader Bot — Application Entry Point.
-
-Part 1: logging, directories, health server, bot construction, graceful shutdown.
-Part 2 will add MongoDB connection initialization and user-registration middleware.
-"""
+"""Team JB Downloader Bot — Entry point. Python 3.12."""
 
 from __future__ import annotations
 
@@ -75,8 +70,6 @@ async def run() -> None:
 
     bot = build_bot()
     dp = Dispatcher()
-
-    # Part 2 will register PyMongoStorage and user_register middleware here.
 
     shutdown_event = asyncio.Event()
 
