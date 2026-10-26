@@ -1,4 +1,4 @@
-"""Team JB Downloader Bot — Application Entry Point. Part 2."""
+"""Team JB Downloader Bot — Application Entry Point. Part 3."""
 
 from __future__ import annotations
 
@@ -16,6 +16,8 @@ from aiogram.fsm.storage.pymongo import PyMongoStorage
 
 from config import settings
 from database import db
+from handlers import callbacks as callbacks_router
+from handlers import start as start_router
 from health import start_health_server
 from middlewares.user_register import UserRegisterMiddleware
 
@@ -61,7 +63,7 @@ async def run() -> None:
     configure_logging()
     settings.ensure_directories()
 
-    logger.info("Starting Team JB Downloader Bot (Part 2)")
+    logger.info("Starting Team JB Downloader Bot (Part 3)")
     logger.info("Owner ID: %d", settings.owner_id)
     logger.info("MongoDB URI: %s", settings.redacted_mongodb_uri)
     logger.info("MongoDB database: %s", settings.mongodb_database)
@@ -82,7 +84,12 @@ async def run() -> None:
 
     bot = build_bot()
     dp = Dispatcher(storage=fsm_storage)
+
+    # Middleware first, then routers.
     dp.update.outer_middleware(UserRegisterMiddleware())
+
+    dp.include_router(start_router.router)
+    dp.include_router(callbacks_router.router)
 
     shutdown_event = asyncio.Event()
 
