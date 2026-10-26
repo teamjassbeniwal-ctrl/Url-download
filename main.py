@@ -1,4 +1,4 @@
-"""Team JB Downloader Bot — Application Entry Point. Part 5."""
+"""Team JB Downloader Bot — Application Entry Point. Part 5 (final force-sub fix)."""
 
 from __future__ import annotations
 
@@ -89,16 +89,24 @@ async def run() -> None:
     bot = build_bot()
     dp = Dispatcher(storage=fsm_storage)
 
-    # Outer middleware order: register → ban check → force-sub.
+    # ── Middlewares ───────────────────────────────────────────────────────
+    # update-level middlewares run for every update type.
     dp.update.outer_middleware(UserRegisterMiddleware())
     dp.update.outer_middleware(BanCheckMiddleware())
-    dp.update.outer_middleware(ForceSubMiddleware())
     dp.update.middleware(OwnerRejectMiddleware())
 
+    # Force-sub must be registered separately on message and callback_query.
+    # Registering only on dp.update does not reliably catch CallbackQuery.
+    force_sub = ForceSubMiddleware()
+    dp.message.outer_middleware(force_sub)
+    dp.callback_query.outer_middleware(force_sub)
+
+    # ── Routers ───────────────────────────────────────────────────────────
     dp.include_router(start_router.router)
     dp.include_router(callbacks_router.router)
     dp.include_router(admin_router.router)
 
+    # ── Graceful shutdown ─────────────────────────────────────────────────
     shutdown_event = asyncio.Event()
 
     def _request_shutdown(sig: int) -> None:
@@ -112,6 +120,7 @@ async def run() -> None:
         except NotImplementedError:
             signal.signal(sig, lambda s, _: _request_shutdown(s))
 
+    # ── Polling ───────────────────────────────────────────────────────────
     polling_task = asyncio.create_task(
         dp.start_polling(bot, handle_signals=False),
         name="aiogram-polling",
