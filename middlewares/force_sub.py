@@ -1,12 +1,9 @@
 """
 Team JB Downloader Bot — Force-subscribe middleware.
 
-Behavior:
-- Owner bypasses the check entirely.
-- /start and /help are whitelisted so users can always reach the prompt.
-- Genuine non-members see a Join Required message with Join + Verify buttons.
-- API errors (bot not admin, chat not found) are logged with full context
-  and shown as a temporary error instead of pretending the user is not joined.
+Registered separately on message and callback_query so it catches both.
+Owner bypasses. ONLY fsub:verify is whitelisted. Every other command
+(including /start and /help) requires channel membership.
 """
 
 from __future__ import annotations
@@ -18,8 +15,6 @@ from aiogram import BaseMiddleware
 from aiogram.types import (
     CallbackQuery,
     ChatMemberAdministrator,
-    ChatMemberBanned,
-    ChatMemberLeft,
     ChatMemberMember,
     ChatMemberOwner,
     ChatMemberRestricted,
@@ -37,12 +32,10 @@ logger = logging.getLogger(__name__)
 
 
 def _is_member_object(member) -> bool:
-    """Return True only for statuses that mean the user is currently in the chat."""
     if isinstance(member, (ChatMemberOwner, ChatMemberAdministrator, ChatMemberMember)):
         return True
     if isinstance(member, ChatMemberRestricted):
         return member.is_member
-    # ChatMemberLeft and ChatMemberBanned are not members
     return False
 
 
@@ -59,25 +52,25 @@ class ForceSubMiddleware(BaseMiddleware):
         if user is None or user.is_bot or bot is None:
             return await handler(event, data)
 
-        # 1. Owner bypass.
+        # Owner bypass.
         if user.id == settings.owner_id:
             return await handler(event, data)
 
-        # 2. Whitelist /start, /help, and fsub: callbacks.
-        if self._is_whitelisted(event):
+        # ONLY fsub:verify is whitelisted. /start and /help are NOT.
+        if isinstance(event, CallbackQuery) and (event.data or "").startswith("fsub:"):
             return await handler(event, data)
 
-        # 3. Load active channels.
+        # Load channels.
         try:
             channels = [doc async for doc in db.force_sub_channels.find({"is_active": True})]
         except Exception:
             logger.exception("Force-sub: MongoDB error loading channels")
-            return await handler(event, data)  # Do not block on DB failure.
+            return await handler(event, data)
 
         if not channels:
             return await handler(event, data)
 
-        # 4. Check each channel.
+        # Check each channel.
         missing: list[dict] = []
         permission_error: Exception | None = None
 
@@ -92,39 +85,21 @@ class ForceSubMiddleware(BaseMiddleware):
                     "Force-sub CHECK FAILED | user=%d | channel=%s | %s: %s",
                     user.id, channel_id, type(exc).__name__, exc,
                 )
-                # Distinguish permission errors from other failures.
                 error_str = str(exc).lower()
                 if "not enough rights" in error_str or "forbidden" in error_str:
                     permission_error = exc
                 else:
-                    # Chat not found, bot removed, etc. Treat as not joined so
-                    # the user still sees a prompt and the owner sees the log.
                     missing.append(ch)
 
-        # 5. If a permission error occurred, show a temporary error.
         if permission_error is not None and not missing:
             await self._send_temp_error(event)
             return None
 
-        # 6. If missing, show the join prompt.
         if missing:
             await self._send_join_prompt(event, missing)
             return None
 
-        # 7. All checks passed.
         return await handler(event, data)
-
-    @staticmethod
-    def _is_whitelisted(event: TelegramObject) -> bool:
-        if isinstance(event, Message):
-            text = (event.text or "").strip()
-            if not text.startswith("/"):
-                return False
-            command = text.split()[0].split("@")[0].lower()
-            return command in {"/start", "/help"}
-        if isinstance(event, CallbackQuery):
-            return (event.data or "").startswith("fsub:")
-        return False
 
     async def _send_join_prompt(self, event: TelegramObject, missing: list[dict]) -> None:
         builder = InlineKeyboardBuilder()
@@ -135,12 +110,11 @@ class ForceSubMiddleware(BaseMiddleware):
                 url = f"https://t.me/{username.lstrip('@')}"
             if not url:
                 logger.error(
-                    "Force-sub: no usable link for channel %s. Re-add with /addchannel.",
+                    "Force-sub: no link for channel %s. Re-add with /addchannel.",
                     ch.get("channel_id"),
                 )
                 continue
-            label = username or "Channel"
-            builder.row(InlineKeyboardButton(text=f"📢 Join {label}", url=url))
+            builder.row(InlineKeyboardButton(text=f"📢 Join {username or 'Channel'}", url=url))
 
         builder.row(InlineKeyboardButton(
             text="✅ I've Joined — Verify", callback_data="fsub:verify",
