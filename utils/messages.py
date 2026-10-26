@@ -34,8 +34,6 @@ HELP_MESSAGE = (
     "• /premium — premium benefits\n"
     "• /getpremium — how to buy premium\n"
     "• /redeem — redeem a coupon code\n"
-    "• /refer — your referral link (coming soon)\n"
-    "• /referrals — your referral list (coming soon)\n\n"
     "👑 <b>Owner commands</b>\n"
     "• /owner, /stats, /ban, /unban, /broadcast, /restart\n"
     "• /addchannel, /removechannel, /channels\n"
