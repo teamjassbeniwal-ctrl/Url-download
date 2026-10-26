@@ -1,19 +1,12 @@
 """
 Team JB Downloader Bot — Owner and admin handlers.
-
-Implements:
-- /owner    : inline dashboard
-- /stats    : bot statistics from MongoDB
-- /ban      : ban a user (reply or by ID)
-- /unban    : unban a user
-- /broadcast: send a message to all users
-- /restart  : graceful restart of polling loop
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 from datetime import datetime, timezone
 
 from aiogram import Bot, F, Router
@@ -78,7 +71,6 @@ async def cmd_stats_reject(message: Message) -> None:
 
 
 async def _build_stats_text() -> str:
-    """Collect live statistics from MongoDB."""
     now = datetime.now(timezone.utc)
     try:
         total_users = await db.users.count_documents({})
@@ -90,6 +82,7 @@ async def _build_stats_text() -> str:
         total_downloads = await db.downloads.count_documents({})
         completed_downloads = await db.downloads.count_documents({"status": "completed"})
         failed_downloads = await db.downloads.count_documents({"status": "failed"})
+        active_channels = await db.force_sub_channels.count_documents({"is_active": True})
     except Exception:
         logger.exception("Failed to build stats")
         return "❌ Failed to load statistics from the database."
@@ -98,7 +91,8 @@ async def _build_stats_text() -> str:
         "📊 <b>Team JB Downloader — Statistics</b>\n\n"
         f"👥 Total users: <b>{total_users}</b>\n"
         f"🚫 Banned users: <b>{banned_users}</b>\n"
-        f"💎 Active premium: <b>{active_premium}</b>\n\n"
+        f"💎 Active premium: <b>{active_premium}</b>\n"
+        f"📢 Force-sub channels: <b>{active_channels}</b>\n\n"
         f"📥 Total downloads: <b>{total_downloads}</b>\n"
         f"✅ Completed: <b>{completed_downloads}</b>\n"
         f"❌ Failed: <b>{failed_downloads}</b>\n\n"
@@ -109,19 +103,14 @@ async def _build_stats_text() -> str:
 # ── /ban and /unban ───────────────────────────────────────────────────────
 
 def _extract_target_id(message: Message, command: CommandObject) -> int | None:
-    """Return the Telegram ID of the user to act on, or None if not resolvable."""
-    # Priority 1: reply to a message
     if message.reply_to_message and message.reply_to_message.from_user:
         return message.reply_to_message.from_user.id
-
-    # Priority 2: numeric argument
     if command.args:
         token = command.args.split()[0]
         try:
             return int(token)
         except ValueError:
             return None
-
     return None
 
 
@@ -130,24 +119,18 @@ async def cmd_ban(message: Message, command: CommandObject) -> None:
     target_id = _extract_target_id(message, command)
     if target_id is None:
         await message.answer(
-            "Usage:\n"
-            "• Reply to a user's message with /ban\n"
-            "• Or /ban 123456789"
+            "Usage:\n• Reply to a user's message with /ban\n• Or /ban 123456789"
         )
         return
-
     if target_id == settings.owner_id:
         await message.answer("🚫 You cannot ban yourself.")
         return
-
     result = await db.users.update_one(
-        {"telegram_id": target_id},
-        {"$set": {"is_banned": True}},
+        {"telegram_id": target_id}, {"$set": {"is_banned": True}}
     )
     if result.matched_count == 0:
         await message.answer(f"⚠️ No user found with ID {target_id}.")
         return
-
     logger.info("User %d banned by owner %d", target_id, message.from_user.id)
     await message.answer(f"✅ User <code>{target_id}</code> has been banned.")
 
@@ -157,20 +140,15 @@ async def cmd_unban(message: Message, command: CommandObject) -> None:
     target_id = _extract_target_id(message, command)
     if target_id is None:
         await message.answer(
-            "Usage:\n"
-            "• Reply to a user's message with /unban\n"
-            "• Or /unban 123456789"
+            "Usage:\n• Reply to a user's message with /unban\n• Or /unban 123456789"
         )
         return
-
     result = await db.users.update_one(
-        {"telegram_id": target_id},
-        {"$set": {"is_banned": False}},
+        {"telegram_id": target_id}, {"$set": {"is_banned": False}}
     )
     if result.matched_count == 0:
         await message.answer(f"⚠️ No user found with ID {target_id}.")
         return
-
     logger.info("User %d unbanned by owner %d", target_id, message.from_user.id)
     await message.answer(f"✅ User <code>{target_id}</code> has been unbanned.")
 
@@ -179,30 +157,19 @@ async def cmd_unban(message: Message, command: CommandObject) -> None:
 
 @router.message(Command("broadcast"), OwnerOnly())
 async def cmd_broadcast(message: Message, command: CommandObject, bot: Bot) -> None:
-    """
-    Broadcast a message to all users.
-
-    Usage: reply to any message with /broadcast, or use /broadcast <text>.
-    Rate-limited to respect Telegram's ~30 messages/second global limit.
-    """
     source_message = message.reply_to_message
     text = (command.args or "").strip() if command.args else ""
-
     if source_message is None and not text:
         await message.answer(
             "Usage:\n"
-            "• Reply to any message (text, photo, video, document) with /broadcast\n"
+            "• Reply to any message with /broadcast\n"
             "• Or /broadcast your text message"
         )
         return
 
     await message.answer("📤 Broadcasting... This may take a while.")
 
-    sent = 0
-    failed = 0
-    forbidden = 0
-
-    # Stream through all users in batches to keep memory bounded.
+    sent = failed = forbidden = 0
     cursor = db.users.find({"is_banned": False}, {"telegram_id": 1})
     async for user_doc in cursor:
         target_id = user_doc["telegram_id"]
@@ -226,8 +193,6 @@ async def cmd_broadcast(message: Message, command: CommandObject, bot: Bot) -> N
             forbidden += 1
         except Exception:
             failed += 1
-
-        # Small sleep to avoid hitting the global rate limit.
         if sent % 25 == 0:
             await asyncio.sleep(1)
 
@@ -239,8 +204,7 @@ async def cmd_broadcast(message: Message, command: CommandObject, bot: Bot) -> N
         "forbidden_count": forbidden,
         "created_at": datetime.now(timezone.utc),
     })
-
-    logger.info("Broadcast by owner: sent=%d failed=%d forbidden=%d", sent, failed, forbidden)
+    logger.info("Broadcast: sent=%d failed=%d forbidden=%d", sent, failed, forbidden)
     await message.answer(
         f"✅ <b>Broadcast complete</b>\n\n"
         f"Sent: <b>{sent}</b>\n"
@@ -253,18 +217,132 @@ async def cmd_broadcast(message: Message, command: CommandObject, bot: Bot) -> N
 
 @router.message(Command("restart"), OwnerOnly())
 async def cmd_restart(message: Message) -> None:
-    """
-    Gracefully restart the polling loop.
-
-    Sets a flag that main.py's polling loop checks. If the container is
-    managed by Koyeb (which restarts on exit), we simply exit cleanly so
-    Koyeb relaunches the process. This avoids stale long-poll connections.
-    """
     await message.answer("🔄 Restarting the bot process...")
-
-    # The cleanest approach on Koyeb is to exit and let the platform restart.
-    # A short delay gives the reply time to be delivered.
     await asyncio.sleep(1)
     logger.info("Owner requested restart; exiting process")
-    import sys
     sys.exit(0)
+
+
+# ── Force-subscribe channel management ────────────────────────────────────
+
+@router.message(Command("addchannel"), OwnerOnly())
+async def cmd_addchannel(message: Message, command: CommandObject) -> None:
+    """
+    Add a force-subscribe channel.
+
+    Usage:
+    • /addchannel @username        — public channel
+    • /addchannel -1001234567890   — private channel (bot must be admin)
+    """
+    if not command.args:
+        await message.answer(
+            "Usage:\n"
+            "• /addchannel @username\n"
+            "• /addchannel -1001234567890   (bot must be admin in private channel)"
+        )
+        return
+
+    raw = command.args.split()[0].strip()
+
+    channel_id: int | None = None
+    channel_username: str | None = None
+
+    try:
+        if raw.startswith("@"):
+            chat = await message.bot.get_chat(raw)
+            channel_id = chat.id
+            channel_username = chat.username
+        else:
+            channel_id = int(raw)
+            chat = await message.bot.get_chat(channel_id)
+            channel_username = chat.username
+    except Exception as exc:
+        await message.answer(
+            f"❌ Could not resolve channel <code>{raw}</code>.\n"
+            f"Make sure the bot is an admin in the channel.\n\n<i>{exc}</i>"
+        )
+        return
+
+    # Verify the bot can check membership in this channel.
+    try:
+        await message.bot.get_chat_member(channel_id, message.bot.id)
+    except Exception as exc:
+        await message.answer(
+            "❌ The bot cannot check membership in this channel.\n"
+            "Add the bot as an administrator and try again.\n\n"
+            f"<i>{exc}</i>"
+        )
+        return
+
+    result = await db.force_sub_channels.update_one(
+        {"channel_id": channel_id},
+        {
+            "$set": {
+                "channel_id": channel_id,
+                "channel_username": channel_username,
+                "is_active": True,
+                "added_by": message.from_user.id,
+                "added_at": datetime.now(timezone.utc),
+            }
+        },
+        upsert=True,
+    )
+    action = "updated" if result.upserted_id is None else "added"
+    logger.info("Force-sub channel %s %s by owner", channel_id, action)
+    await message.answer(
+        f"✅ Force-sub channel <b>{action}</b>:\n"
+        f"ID: <code>{channel_id}</code>\n"
+        f"Username: @{channel_username}" if channel_username else
+        f"✅ Force-sub channel <b>{action}</b>:\n"
+        f"ID: <code>{channel_id}</code>"
+    )
+
+
+@router.message(Command("removechannel"), OwnerOnly())
+async def cmd_removechannel(message: Message, command: CommandObject) -> None:
+    """Remove a force-subscribe channel by username or ID."""
+    if not command.args:
+        await message.answer("Usage: /removechannel @username  or  /removechannel -1001234567890")
+        return
+
+    raw = command.args.split()[0].strip()
+    query: dict = {}
+    if raw.startswith("@"):
+        query["channel_username"] = raw.lstrip("@")
+    else:
+        try:
+            query["channel_id"] = int(raw)
+        except ValueError:
+            await message.answer("❌ Invalid channel identifier.")
+            return
+
+    result = await db.force_sub_channels.delete_one(query)
+    if result.deleted_count == 0:
+        await message.answer(f"⚠️ No channel found for {raw}.")
+        return
+    logger.info("Force-sub channel removed: %s", raw)
+    await message.answer(f"✅ Channel <b>removed</b>: {raw}")
+
+
+@router.message(Command("channels"), OwnerOnly())
+async def cmd_channels(message: Message) -> None:
+    """List all force-subscribe channels."""
+    docs = [doc async for doc in db.force_sub_channels.find({})]
+    if not docs:
+        await message.answer(
+            "📢 <b>Force-sub channels</b>\n\nNo channels configured.\n"
+            "Add one with /addchannel @username"
+        )
+        return
+
+    lines = ["📢 <b>Force-sub channels</b>\n"]
+    for doc in docs:
+        cid = doc.get("channel_id")
+        uname = doc.get("channel_username")
+        active = doc.get("is_active", False)
+        marker = "✅" if active else "⏸️"
+        if uname:
+            lines.append(f"{marker} @{uname} — <code>{cid}</code>")
+        else:
+            lines.append(f"{marker} <code>{cid}</code> (private)")
+    await message.answer("\n".join(lines))
