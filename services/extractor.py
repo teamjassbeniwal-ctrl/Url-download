@@ -1,12 +1,5 @@
 """
 Team JB Downloader Bot — URL classification and yt-dlp extraction.
-
-Determines whether a URL is a direct file, a yt-dlp-supported source, or
-unsupported. All yt-dlp calls run in a thread pool to avoid blocking the
-event loop.
-
-YouTube cookies: if /app/cookies.txt exists, yt-dlp will use it. This is
-optional and the bot degrades gracefully if the file is missing.
 """
 
 from __future__ import annotations
@@ -21,6 +14,7 @@ from urllib.parse import urlparse
 import aiohttp
 import yt_dlp
 
+from config import settings
 from utils.security import validate_url
 
 logger = logging.getLogger(__name__)
@@ -69,7 +63,6 @@ _DIRECT_CONTENT_EXACT = {
 
 
 async def _probe_direct_file(url: str, timeout: int = 15) -> Optional[DirectFileInfo]:
-    """HEAD-request the URL to see if it is a direct file."""
     headers = {"User-Agent": "TeamJB-Downloader/1.0"}
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as session:
@@ -121,9 +114,15 @@ def _ytdlp_extract_sync(url: str) -> Optional[dict]:
         "extract_flat": False,
     }
 
-    # Add cookies if the file exists.
+    # Add cookies if the file exists
     if os.path.isfile(COOKIE_FILE):
         opts["cookiefile"] = COOKIE_FILE
+        logger.info("✅ Using cookie file for yt-dlp.")
+        
+    # Add proxy if configured
+    if settings.proxy_url:
+        opts["proxy"] = settings.proxy_url
+        logger.info("✅ Using proxy for yt-dlp: %s", settings.proxy_url)
 
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -178,7 +177,6 @@ async def _extract_with_ytdlp(url: str) -> Optional[YtdlpInfo]:
 # ── Public entry point ────────────────────────────────────────────────────
 
 async def extract(url: str) -> ExtractionResult:
-    """Classify and extract metadata for a user-submitted URL."""
     try:
         validate_url(url)
     except Exception as exc:
