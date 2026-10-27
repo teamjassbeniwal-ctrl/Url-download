@@ -1,11 +1,5 @@
 """
 Team JB Downloader Bot — Download engine.
-
-Provides:
-- download_direct_file : HTTP streaming with progress callback
-- download_via_ytdlp   : yt-dlp download bridged to asyncio with progress
-
-YouTube cookies: if /app/cookies.txt exists, yt-dlp will use it.
 """
 
 from __future__ import annotations
@@ -45,7 +39,6 @@ async def download_direct_file(
     dest_dir: Path,
     progress_cb: Optional[ProgressCallback] = None,
 ) -> DownloadResult:
-    """Download a direct file with streaming and progress."""
     validate_url(url)
     dest_dir.mkdir(parents=True, exist_ok=True)
 
@@ -134,9 +127,15 @@ def _ytdlp_download_sync(
         "trim_file_name": 100,
     }
 
-    # Add cookies if the file exists.
+    # Add cookies if the file exists
     if os.path.isfile(COOKIE_FILE):
         opts["cookiefile"] = COOKIE_FILE
+        logger.info("✅ Using cookie file for yt-dlp download.")
+        
+    # Add proxy if configured
+    if settings.proxy_url:
+        opts["proxy"] = settings.proxy_url
+        logger.info("✅ Using proxy for yt-dlp download: %s", settings.proxy_url)
 
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=True)
@@ -156,7 +155,6 @@ async def download_via_ytdlp(
     dest_dir: Path,
     progress_cb: Optional[ProgressCallback] = None,
 ) -> DownloadResult:
-    """Download using yt-dlp. Runs the blocking download in a thread pool."""
     validate_url(url)
     dest_dir.mkdir(parents=True, exist_ok=True)
 
