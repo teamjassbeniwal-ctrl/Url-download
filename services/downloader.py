@@ -4,12 +4,15 @@ Team JB Downloader Bot — Download engine.
 Provides:
 - download_direct_file : HTTP streaming with progress callback
 - download_via_ytdlp   : yt-dlp download bridged to asyncio with progress
+
+YouTube cookies: if /app/cookies.txt exists, yt-dlp will use it.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable, Optional
@@ -23,6 +26,7 @@ from utils.security import validate_url
 
 logger = logging.getLogger(__name__)
 
+COOKIE_FILE = "/app/cookies.txt"
 
 ProgressCallback = Callable[[dict], Awaitable[None]]
 
@@ -41,13 +45,7 @@ async def download_direct_file(
     dest_dir: Path,
     progress_cb: Optional[ProgressCallback] = None,
 ) -> DownloadResult:
-    """
-    Download a direct file with streaming and progress.
-
-    progress_cb receives dicts like:
-        {"status": "downloading", "downloaded": int, "total": int, "speed": float}
-        {"status": "finished", "filepath": str}
-    """
+    """Download a direct file with streaming and progress."""
     validate_url(url)
     dest_dir.mkdir(parents=True, exist_ok=True)
 
@@ -135,17 +133,20 @@ def _ytdlp_download_sync(
         "restrictfilenames": True,
         "trim_file_name": 100,
     }
+
+    # Add cookies if the file exists.
+    if os.path.isfile(COOKIE_FILE):
+        opts["cookiefile"] = COOKIE_FILE
+
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=True)
         if info is None:
             raise RuntimeError("yt-dlp returned no info")
-        # requested_downloads contains the final path after post-processing.
         requested = info.get("requested_downloads") or []
         if requested:
             fp = requested[0].get("filepath")
             if fp:
                 return fp
-        # Fallback: prepare_filename
         return ydl.prepare_filename(info)
 
 
@@ -155,17 +156,13 @@ async def download_via_ytdlp(
     dest_dir: Path,
     progress_cb: Optional[ProgressCallback] = None,
 ) -> DownloadResult:
-    """
-    Download using yt-dlp. Runs the blocking download in a thread pool and
-    bridges progress hooks back to the asyncio loop.
-    """
+    """Download using yt-dlp. Runs the blocking download in a thread pool."""
     validate_url(url)
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     loop = asyncio.get_running_loop()
 
     def _bridge_hook(d: dict) -> None:
-        """Called from the yt-dlp worker thread. Schedule the async callback."""
         if progress_cb is None:
             return
         if d.get("status") not in {"downloading", "finished"}:
