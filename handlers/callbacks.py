@@ -56,7 +56,8 @@ _HOWTO_TEXT = (
     "3. The bot will analyze the link and show you available options.\n"
     "4. Choose a format (video, audio, or document).\n"
     "5. Wait for the upload to complete.\n\n"
-    "<i>URL analysis and downloads will be activated in a later update.</i>"
+    "Supported: direct files, YouTube, Instagram, TikTok, Twitter/X, "
+    "Facebook, and other yt-dlp sources."
 )
 
 _REFER_TEXT = (
