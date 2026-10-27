@@ -4,14 +4,19 @@ Team JB Downloader Bot — URL classification and yt-dlp extraction.
 Determines whether a URL is a direct file, a yt-dlp-supported source, or
 unsupported. All yt-dlp calls run in a thread pool to avoid blocking the
 event loop.
+
+YouTube cookies: if /app/cookies.txt exists, yt-dlp will use it. This is
+optional and the bot degrades gracefully if the file is missing.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Optional
+from urllib.parse import urlparse
 
 import aiohttp
 import yt_dlp
@@ -19,6 +24,8 @@ import yt_dlp
 from utils.security import validate_url
 
 logger = logging.getLogger(__name__)
+
+COOKIE_FILE = "/app/cookies.txt"
 
 
 @dataclass
@@ -62,13 +69,7 @@ _DIRECT_CONTENT_EXACT = {
 
 
 async def _probe_direct_file(url: str, timeout: int = 15) -> Optional[DirectFileInfo]:
-    """
-    HEAD-request the URL to see if it is a direct file.
-
-    Returns DirectFileInfo if the Content-Type looks like a file, or None.
-    Some servers do not support HEAD; in that case we fall back to a streamed
-    GET with the first byte read and abort.
-    """
+    """HEAD-request the URL to see if it is a direct file."""
     headers = {"User-Agent": "TeamJB-Downloader/1.0"}
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as session:
@@ -86,9 +87,7 @@ async def _probe_direct_file(url: str, timeout: int = 15) -> Optional[DirectFile
                         size_bytes=int(content_length) if content_length and content_length.isdigit() else None,
                     )
                 return None
-    except aiohttp.ClientError:
-        return None
-    except asyncio.TimeoutError:
+    except (aiohttp.ClientError, asyncio.TimeoutError):
         return None
 
 
@@ -101,20 +100,13 @@ def _is_direct_content_type(content_type: str) -> bool:
 
 
 def _filename_from_response(resp: aiohttp.ClientResponse, fallback_url: str) -> str:
-    """Extract filename from Content-Disposition or URL path."""
     cd = resp.headers.get("Content-Disposition", "")
     if "filename=" in cd:
-        # Handles both quoted and unquoted forms.
         part = cd.split("filename=", 1)[1].strip().strip('"').strip("'")
         if part:
             return part
-    path = urlparse_path(fallback_url)
+    path = urlparse(fallback_url).path
     return path.rsplit("/", 1)[-1] or "download.bin"
-
-
-def urlparse_path(url: str) -> str:
-    from urllib.parse import urlparse
-    return urlparse(url).path
 
 
 # ── yt-dlp extraction ─────────────────────────────────────────────────────
@@ -128,6 +120,11 @@ def _ytdlp_extract_sync(url: str) -> Optional[dict]:
         "skip_download": True,
         "extract_flat": False,
     }
+
+    # Add cookies if the file exists.
+    if os.path.isfile(COOKIE_FILE):
+        opts["cookiefile"] = COOKIE_FILE
+
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -143,13 +140,11 @@ def _ytdlp_extract_sync(url: str) -> Optional[dict]:
 
 
 def _build_formats(info: dict) -> list[dict]:
-    """Normalize yt-dlp formats into a simpler list for the handler."""
     formats = info.get("formats") or []
     result = []
     for f in formats:
         if not f.get("url"):
             continue
-        # Skip audio-only variants that yt-dlp marks as storyboard thumbnails.
         if f.get("format_note") == "storyboard":
             continue
         result.append({
@@ -167,7 +162,6 @@ def _build_formats(info: dict) -> list[dict]:
 
 
 async def _extract_with_ytdlp(url: str) -> Optional[YtdlpInfo]:
-    """Run yt-dlp extraction in a thread pool and wrap the result."""
     loop = asyncio.get_running_loop()
     info = await loop.run_in_executor(None, _ytdlp_extract_sync, url)
     if info is None:
@@ -184,11 +178,7 @@ async def _extract_with_ytdlp(url: str) -> Optional[YtdlpInfo]:
 # ── Public entry point ────────────────────────────────────────────────────
 
 async def extract(url: str) -> ExtractionResult:
-    """
-    Classify and extract metadata for a user-submitted URL.
-
-    Tries direct file first, then yt-dlp, then returns "unsupported".
-    """
+    """Classify and extract metadata for a user-submitted URL."""
     try:
         validate_url(url)
     except Exception as exc:
