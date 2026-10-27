@@ -1,12 +1,5 @@
 """
 Team JB Downloader Bot — Configuration Module.
-
-Loads all configuration from environment variables via pydantic-settings.
-Database: MongoDB via PyMongo Async API (AsyncMongoClient).
-No other module reads os.environ directly.
-
-Generate FERNET_KEY with:
-    python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 """
 
 from __future__ import annotations
@@ -19,8 +12,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Application settings loaded from environment variables and .env file."""
-
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -36,23 +27,23 @@ class Settings(BaseSettings):
     telegram_api_server: Optional[str] = Field(default=None)
 
     # ── MongoDB ───────────────────────────────────────────────────────────
-    mongodb_uri: str = Field(
-        default="mongodb://localhost:27017/",
-        description="MongoDB connection URI (mongodb:// or mongodb+srv://)",
-    )
-    mongodb_database: str = Field(
-        default="teamjb_downloader",
-        description="MongoDB database name",
-    )
+    mongodb_uri: str = Field(default="mongodb://localhost:27017/")
+    mongodb_database: str = Field(default="teamjb_downloader")
     mongodb_tls: bool = Field(default=False)
     mongodb_server_selection_timeout_ms: int = Field(default=5000, ge=1000, le=60000)
 
-    # ── Redis (optional, Part 16) ─────────────────────────────────────────
+    # ── Redis (Optional) ──────────────────────────────────────────────────
     redis_url: Optional[str] = Field(default=None)
 
-    # ── Google Drive (optional, Part 15) ─────────────────────────────────
+    # ── Google Drive (Optional) ───────────────────────────────────────────
     gdrive_credentials_json: Optional[str] = Field(default=None)
     gdrive_service_account_email: Optional[str] = Field(default=None)
+
+    # ── Proxy (Optional) ──────────────────────────────────────────────────
+    proxy_url: Optional[str] = Field(
+        default=None, 
+        description="Optional proxy for yt-dlp (e.g. http://user:pass@ip:port)"
+    )
 
     # ── Encryption ────────────────────────────────────────────────────────
     fernet_key: str = Field(...)
@@ -108,15 +99,6 @@ class Settings(BaseSettings):
                 "mongodb_uri must start with 'mongodb://' or 'mongodb+srv://'."
             )
         return v
-
-    @field_validator("referral_reward_plan")
-    @classmethod
-    def _validate_referral_plan(cls, v: str) -> str:
-        allowed = {"weekly", "monthly", "yearly"}
-        lower = v.lower()
-        if lower not in allowed:
-            raise ValueError(f"referral_reward_plan must be one of {allowed}, got {v}")
-        return lower
 
     def ensure_directories(self) -> None:
         self.download_dir.mkdir(parents=True, exist_ok=True)
