@@ -79,8 +79,12 @@ async def cmd_myplan(message: Message) -> None:
         return
 
     expires_at = sub.get("expires_at")
+    now = datetime.now(timezone.utc)
+
     if isinstance(expires_at, datetime):
-        now = datetime.now(timezone.utc)
+        # MongoDB returns datetimes as naive UTC. Attach timezone if missing.
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
         days_left = max(0, (expires_at - now).days)
         expiry_text = expires_at.strftime("%Y-%m-%d %H:%M UTC")
     else:
