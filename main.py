@@ -1,4 +1,4 @@
-"""Team JB Downloader Bot — Application Entry Point. Part 8."""
+"""Team JB Downloader Bot — Application Entry Point. Part 9."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from config import settings
 from database import db
 from handlers import admin as admin_router
 from handlers import callbacks as callbacks_router
+from handlers import download as download_router
 from handlers import premium as premium_router
 from handlers import premium_admin as premium_admin_router
 from handlers import referral as referral_router
@@ -47,7 +48,7 @@ def configure_logging() -> None:
         handlers=handlers,
         force=True,
     )
-    for noisy in ("aiogram.event", "aiohttp.access", "pymongo"):
+    for noisy in ("aiogram.event", "aiohttp.access", "pymongo", "yt_dlp"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
@@ -71,7 +72,7 @@ async def run() -> None:
     configure_logging()
     settings.ensure_directories()
 
-    logger.info("Starting Team JB Downloader Bot (Part 8)")
+    logger.info("Starting Team JB Downloader Bot (Part 9)")
     logger.info("Owner ID: %d", settings.owner_id)
     logger.info("MongoDB URI: %s", settings.redacted_mongodb_uri)
     logger.info("MongoDB database: %s", settings.mongodb_database)
@@ -102,8 +103,9 @@ async def run() -> None:
     dp.message.outer_middleware(force_sub)
     dp.callback_query.outer_middleware(force_sub)
 
-    # Routers
+    # Routers — download before callbacks so plain URLs match first.
     dp.include_router(start_router.router)
+    dp.include_router(download_router.router)
     dp.include_router(callbacks_router.router)
     dp.include_router(admin_router.router)
     dp.include_router(premium_router.router)
@@ -116,7 +118,6 @@ async def run() -> None:
         name="subscription-expiry",
     )
 
-    # Graceful shutdown
     shutdown_event = asyncio.Event()
 
     def _request_shutdown(sig: int) -> None:
@@ -130,7 +131,6 @@ async def run() -> None:
         except NotImplementedError:
             signal.signal(sig, lambda s, _: _request_shutdown(s))
 
-    # Polling
     polling_task = asyncio.create_task(
         dp.start_polling(bot, handle_signals=False),
         name="aiogram-polling",
